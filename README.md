@@ -580,13 +580,13 @@ GET https://api.barbrain.com/v2-live/external/v1/recipes
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `limit` | integer | No | Recipes per page. Default `50`, maximum `200` (larger values are capped) |
+| `limit` | integer | No | Recipes per page, `1` to `200`. Default `200`. Any other value is refused with `400` (error code `150`) |
 | `cursor` | string | No | The `nextCursor` of the previous page. Omit it for the first page |
 
 ### Example Request
 
 ```bash
-curl -X GET "https://api.barbrain.com/v2-live/external/v1/recipes?limit=50" \
+curl -X GET "https://api.barbrain.com/v2-live/external/v1/recipes" \
   -H "Authorization: Bearer a1b2c3d4e5f6..."
 ```
 
@@ -609,6 +609,7 @@ curl -X GET "https://api.barbrain.com/v2-live/external/v1/recipes?limit=50" \
       "updatedAt": "2026-10-20T14:12:03Z",
       "totalCogs": 2.42,
       "costPerYieldUnit": 2.42,
+      "cogsUnavailableReason": null,
       "yield": { "type": "PORTION", "amount": 1.0, "unit": null },
       "ingredients": [
         { "productId": "prod-001", "productName": "Fior di Latte", "quantity": 120.0, "unit": "Gram", "ingredientCogs": 1.32 },
@@ -626,6 +627,7 @@ curl -X GET "https://api.barbrain.com/v2-live/external/v1/recipes?limit=50" \
       "updatedAt": "2026-10-18T08:40:51Z",
       "totalCogs": null,
       "costPerYieldUnit": null,
+      "cogsUnavailableReason": "MISSING_PRICES",
       "yield": { "type": "PORTION", "amount": 1.0, "unit": null },
       "ingredients": [
         { "productId": "prod-014", "productName": "San Marzano Tomatoes", "quantity": 80.0, "unit": "Gram", "ingredientCogs": null }
@@ -633,11 +635,13 @@ curl -X GET "https://api.barbrain.com/v2-live/external/v1/recipes?limit=50" \
       "uncostedIngredients": ["San Marzano Tomatoes"]
     }
   ],
-  "nextCursor": "djE6c3RyOk1hcmluYXJhOnJlYy05MDEy"
+  "nextCursor": "djE6dHM6MTc2MDk2MjQ1MTAwMDpyZWMtOTAxMg"
 }
 ```
 
-To fetch everything, repeat the request with `cursor` set to the last `nextCursor` until `nextCursor` is `null`. Recipes are ordered by name; a recipe added or renamed while you page does not make you skip or repeat others.
+To fetch everything, repeat the request with `cursor` set to the last `nextCursor` until `nextCursor` is `null`.
+
+Recipes are ordered by **creation date** (oldest first), not by name, so a sync that spans edits in BarBrain neither skips nor repeats a recipe: renaming a recipe does not move it, a recipe created while you page appears on a later page, and a deleted one simply drops out. Sort by name on your side if you need to.
 
 ### Response Fields
 
@@ -664,7 +668,8 @@ To fetch everything, repeat the request with `cursor` set to the last `nextCurso
 | `isPublished` | boolean | The recipe is published in BarBrain |
 | `updatedAt` | string | ISO 8601 timestamp of the recipe's last change. **Not** of its cost: COGS follows purchase prices, which change without the recipe changing |
 | `totalCogs` | number? | Total COGS for one recipe yield, **including 3% breakage margin**, as in `fetchRecipeCogs`. **`null` when any ingredient has no cost** — see `uncostedIngredients` |
-| `costPerYieldUnit` | number? | `totalCogs` divided by the yield amount (e.g. per ml or per gram). `null` without a cost or a yield |
+| `costPerYieldUnit` | number? | `totalCogs` divided by the yield amount (e.g. per ml or per gram), to four decimals. `null` without a cost or a yield |
+| `cogsUnavailableReason` | string? | Why `totalCogs` is `null`: `"NO_INGREDIENTS"` (the recipe has no ingredients yet) or `"MISSING_PRICES"` (see `uncostedIngredients`). `null` when `totalCogs` is set |
 | `yield` | object? | Recipe yield configuration, as in `fetchRecipeCogs` |
 | `ingredients` | array | Every ingredient line with its cost |
 | `uncostedIngredients` | array | Names of the ingredients without a purchase price, which is why `totalCogs` is `null`. Empty when the recipe is fully costed |
@@ -682,8 +687,17 @@ To fetch everything, repeat the request with `cursor` set to the last `nextCurso
 ### Notes
 
 - Unlike the single-recipe endpoints, a recipe without a cost is **not** an error here: it is listed with `totalCogs: null`, so your sync sees it and can show what is missing.
-- Requests count against the same rate limit as the other endpoints (per request, not per recipe): with `limit=200`, 1,000 recipes take five requests.
+- Requests count against the same rate limit as the other endpoints (per request, not per recipe): at the default 200 per page, 1,000 recipes take five requests. Keep the default unless you need smaller responses.
 - The `cursor` is opaque. An invalid one is answered with `400` and error code `100`; start again without it.
+
+### Errors
+
+| Status | `errorCode` | When | What to do |
+| --- | --- | --- | --- |
+| 401 | — | Missing, invalid, expired or revoked token | Fix the token; see [401 Unauthorized](#401-unauthorized) |
+| 400 | `100` | The `cursor` is not one this endpoint issued | Restart the sync without `cursor` |
+| 400 | `150` | `limit` is not a whole number from 1 to 200 | Fix the parameter |
+| 400 | `15` | The token's company no longer exists in BarBrain | Do not retry; contact BarBrain support |
 
 ---
 
