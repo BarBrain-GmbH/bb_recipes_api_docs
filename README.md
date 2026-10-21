@@ -703,16 +703,30 @@ Recipes are ordered by **creation date** (oldest first), not by name, so a sync 
 
 ## Error Responses
 
+Errors come as a JSON object with the HTTP status: `errorCode` is BarBrain's own code (not the HTTP status, except for `401`), `message` a human-readable text, and `content` extra detail or `null`. Branch on the HTTP status and `errorCode`, never on `message`.
+
+| HTTP | `errorCode` | Meaning |
+| --- | --- | --- |
+| 401 | `401` | Missing, invalid, expired or revoked token |
+| 400 | `8` | A required query parameter is missing |
+| 400 | `15` | The token's company no longer exists |
+| 400 | `89` | `quantitySold` is not a positive integer |
+| 400 | `91` | The batch `items` array is missing, empty or too long |
+| 400 | `100` | Invalid `cursor` (list endpoint) |
+| 400 | `150` | Invalid `limit` (list endpoint) |
+| 404 | `92` | No recipe with that `companyInternalId` |
+| 422 | `93` | The recipe exists but its COGS cannot be calculated |
+| 429 | `429` | Rate limit exceeded for this API client; see `Retry-After` |
+
 ### 401 Unauthorized
 
 Returned when the API token is invalid, expired, or revoked.
 
 ```json
 {
-  "error": {
-    "errorCode": 401,
-    "message": "Invalid or expired API token"
-  }
+  "errorCode": 401,
+  "message": "Access token has expired",
+  "content": null
 }
 ```
 
@@ -729,19 +743,17 @@ Returned when required parameters are missing or invalid.
 
 ```json
 {
-  "error": {
-    "errorCode": 400,
-    "message": "Missing required parameter: companyInternalId"
-  }
+  "errorCode": 8,
+  "message": "Missing Query-Parameter with the key: companyInternalId",
+  "content": null
 }
 ```
 
 ```json
 {
-  "error": {
-    "errorCode": 400,
-    "message": "quantitySold must be a positive integer"
-  }
+  "errorCode": 89,
+  "message": "quantitySold must be a positive integer",
+  "content": null
 }
 ```
 
@@ -749,10 +761,9 @@ Returned when required parameters are missing or invalid.
 
 ```json
 {
-  "error": {
-    "errorCode": 400,
-    "message": "Request body must contain an 'items' array with 1-100 entries"
-  }
+  "errorCode": 91,
+  "message": "Request body must contain an 'items' array with 1-100 entries",
+  "content": null
 }
 ```
 
@@ -762,10 +773,9 @@ Returned when no recipe matches the provided `companyInternalId` for the company
 
 ```json
 {
-  "error": {
-    "errorCode": 404,
-    "message": "Recipe not found for companyInternalId: MOJITO-999"
-  }
+  "errorCode": 92,
+  "message": "Recipe not found for companyInternalId: MOJITO-999",
+  "content": null
 }
 ```
 
@@ -781,10 +791,9 @@ Returned when a recipe is found but COGS cannot be calculated because one or mor
 
 ```json
 {
-  "error": {
-    "errorCode": 422,
-    "message": "Cannot calculate COGS for recipe: MOJITO-001. Some ingredients are missing pricing data."
-  }
+  "errorCode": 93,
+  "message": "Cannot calculate COGS for recipe: MOJITO-001. Some ingredients are missing pricing data.",
+  "content": null
 }
 ```
 
