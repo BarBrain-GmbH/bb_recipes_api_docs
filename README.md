@@ -1,6 +1,6 @@
 # BarBrain's Recipe COGS API - User Guide
 
-> **Last Updated:** April 7, 2026
+> **Last Updated:** October 21, 2026
 > **Owner:** BarBrain GmbH
 > **Status:** Published
 
@@ -10,15 +10,16 @@ This guide explains how to use the BarBrain Recipe COGS API to fetch Cost of Goo
 
 ## Overview
 
-The Recipe COGS API provides three endpoints that allow authorized external systems to retrieve cost data for recipes managed in BarBrain:
+The Recipe COGS API provides four endpoints that allow authorized external systems to retrieve cost data for recipes managed in BarBrain:
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /fetchRecipeCogs` | Get the total calculated COGS for a single recipe |
 | `GET /fetchRecipeIngredientCogs` | Get COGS broken down per ingredient for a single recipe, scaled by quantity sold |
 | `POST /fetchBatchRecipeIngredientCogs` | Get COGS broken down per ingredient for multiple recipes in a single request |
+| `GET /external/v1/recipes` | List **every** recipe of the company with its COGS breakdown, page by page |
 
-All endpoints identify recipes using the `companyInternalId` — a user-defined identifier that companies assign to recipes in BarBrain (e.g., a POS item code or menu item number). This makes it easy to correlate BarBrain recipe data with external systems.
+The first three endpoints identify recipes using the `companyInternalId` — a user-defined identifier that companies assign to recipes in BarBrain (e.g., a POS item code or menu item number). This makes it easy to correlate BarBrain recipe data with external systems. The list endpoint needs no identifier: it returns every recipe, including those without a `companyInternalId`, so a recipe whose ID was never set (or set wrong) is not silently missed.
 
 **Use cases:**
 
@@ -563,6 +564,129 @@ Each item in `results` has the same structure as the single `fetchRecipeIngredie
 
 ---
 
+## Listing All Recipes with COGS
+
+Returns every recipe of the company the API token belongs to, each with its full COGS breakdown, page by page. Use it to sync your whole recipe catalog without relying on every recipe having a correct `companyInternalId`.
+
+The company is always the token's own: there is no location parameter. A company with several locations (back offices) needs one token per location; every response says which company it came from.
+
+### Endpoint
+
+```bash
+GET https://api.barbrain.com/v2-live/external/v1/recipes
+```
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer | No | Recipes per page. Default `50`, maximum `200` (larger values are capped) |
+| `cursor` | string | No | The `nextCursor` of the previous page. Omit it for the first page |
+
+### Example Request
+
+```bash
+curl -X GET "https://api.barbrain.com/v2-live/external/v1/recipes?limit=50" \
+  -H "Authorization: Bearer a1b2c3d4e5f6..."
+```
+
+### Success Response (200 OK)
+
+```json
+{
+  "requestDate": "2026-10-21T09:00:00Z",
+  "companyId": "abc-123-def",
+  "companyName": "Napoli Mitte",
+  "currency": "EUR",
+  "items": [
+    {
+      "recipeId": "rec-5678",
+      "recipeName": "Margherita",
+      "companyInternalId": "PIZZA-001",
+      "category": "Food",
+      "isArchived": false,
+      "isPublished": true,
+      "updatedAt": "2026-10-20T14:12:03Z",
+      "totalCogs": 2.42,
+      "costPerYieldUnit": 2.42,
+      "yield": { "type": "PORTION", "amount": 1.0, "unit": null },
+      "ingredients": [
+        { "productId": "prod-001", "productName": "Fior di Latte", "quantity": 120.0, "unit": "Gram", "ingredientCogs": 1.32 },
+        { "productId": null, "productName": "Pizza Dough", "quantity": 1.0, "unit": "Piece", "ingredientCogs": 0.47 }
+      ],
+      "uncostedIngredients": []
+    },
+    {
+      "recipeId": "rec-9012",
+      "recipeName": "Marinara",
+      "companyInternalId": null,
+      "category": "Food",
+      "isArchived": false,
+      "isPublished": false,
+      "updatedAt": "2026-10-18T08:40:51Z",
+      "totalCogs": null,
+      "costPerYieldUnit": null,
+      "yield": { "type": "PORTION", "amount": 1.0, "unit": null },
+      "ingredients": [
+        { "productId": "prod-014", "productName": "San Marzano Tomatoes", "quantity": 80.0, "unit": "Gram", "ingredientCogs": null }
+      ],
+      "uncostedIngredients": ["San Marzano Tomatoes"]
+    }
+  ],
+  "nextCursor": "djE6c3RyOk1hcmluYXJhOnJlYy05MDEy"
+}
+```
+
+To fetch everything, repeat the request with `cursor` set to the last `nextCursor` until `nextCursor` is `null`. Recipes are ordered by name; a recipe added or renamed while you page does not make you skip or repeat others.
+
+### Response Fields
+
+#### Root Level
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `requestDate` | string | ISO 8601 timestamp of when the request was made |
+| `companyId` | string | The company (location) the API token belongs to |
+| `companyName` | string | Human-readable company name |
+| `currency` | string | ISO 4217 currency code of every amount in the response |
+| `items` | array | The recipes of this page |
+| `nextCursor` | string? | Pass as `cursor` to get the next page. `null` on the last page |
+
+#### Recipe Item
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `recipeId` | string | Unique identifier for this recipe in BarBrain |
+| `recipeName` | string | Human-readable recipe name |
+| `companyInternalId` | string? | The company-defined internal identifier, **or `null` when none is set** |
+| `category` | string | Recipe category: `"Food"`, `"Drink"`, or `"Bundle"` |
+| `isArchived` | boolean | The recipe is archived in BarBrain. Archived recipes are listed too; filter them out if you only want active ones |
+| `isPublished` | boolean | The recipe is published in BarBrain |
+| `updatedAt` | string | ISO 8601 timestamp of the recipe's last change. **Not** of its cost: COGS follows purchase prices, which change without the recipe changing |
+| `totalCogs` | number? | Total COGS for one recipe yield, **including 3% breakage margin**, as in `fetchRecipeCogs`. **`null` when any ingredient has no cost** — see `uncostedIngredients` |
+| `costPerYieldUnit` | number? | `totalCogs` divided by the yield amount (e.g. per ml or per gram). `null` without a cost or a yield |
+| `yield` | object? | Recipe yield configuration, as in `fetchRecipeCogs` |
+| `ingredients` | array | Every ingredient line with its cost |
+| `uncostedIngredients` | array | Names of the ingredients without a purchase price, which is why `totalCogs` is `null`. Empty when the recipe is fully costed |
+
+#### Ingredient Object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `productId` | string? | Product identifier in BarBrain. **Null for pre-products** (recipes used as ingredients) |
+| `productName` | string | Product name, or source recipe name for pre-products |
+| `quantity` | number | Amount of this ingredient used per recipe yield |
+| `unit` | string | Unit of measurement |
+| `ingredientCogs` | number? | Calculated COGS for this ingredient (before breakage margin). **`null` when the ingredient has no purchase price** |
+
+### Notes
+
+- Unlike the single-recipe endpoints, a recipe without a cost is **not** an error here: it is listed with `totalCogs: null`, so your sync sees it and can show what is missing.
+- Requests count against the same rate limit as the other endpoints (per request, not per recipe): with `limit=200`, 1,000 recipes take five requests.
+- The `cursor` is opaque. An invalid one is answered with `400` and error code `100`; start again without it.
+
+---
+
 ## Error Responses
 
 ### 401 Unauthorized
@@ -851,6 +975,7 @@ curl -s -X POST \
 | Display COGS on a menu dashboard | `GET /fetchRecipeCogs` |
 | Cost analysis for a single item's sales | `GET /fetchRecipeIngredientCogs` |
 | End-of-day/shift cost report for all items sold | `POST /fetchBatchRecipeIngredientCogs` |
+| Sync every recipe and its COGS (e.g. nightly), whether or not it has a `companyInternalId` | `GET /external/v1/recipes` |
 
 ### Batch Endpoint Tips
 
