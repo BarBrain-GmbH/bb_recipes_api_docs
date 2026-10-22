@@ -641,7 +641,7 @@ curl -X GET "https://api.barbrain.com/v2-live/external/v1/recipes" \
 
 To fetch everything, repeat the request with `cursor` set to the last `nextCursor` until `nextCursor` is `null`.
 
-Recipes are ordered by **creation date** (oldest first), not by name, so a sync that spans edits in BarBrain neither skips nor repeats a recipe: renaming a recipe does not move it, a recipe created while you page appears on a later page, and a deleted one simply drops out. Sort by name on your side if you need to.
+Recipes are listed in the order they were **created in BarBrain** (oldest first), not by name, so a sync that spans edits in BarBrain neither skips nor repeats a recipe: renaming a recipe does not move it, a recipe created while you page always appears on a later page (even one created in the same instant as the last recipe you received), and a deleted one simply drops out. Sort by name on your side if you need to.
 
 ### Response Fields
 
