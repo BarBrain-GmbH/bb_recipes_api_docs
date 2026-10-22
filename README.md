@@ -1,6 +1,6 @@
 # BarBrain's Recipe COGS API - User Guide
 
-> **Last Updated:** April 7, 2026
+> **Last Updated:** October 21, 2026
 > **Owner:** BarBrain GmbH
 > **Status:** Published
 
@@ -10,15 +10,16 @@ This guide explains how to use the BarBrain Recipe COGS API to fetch Cost of Goo
 
 ## Overview
 
-The Recipe COGS API provides three endpoints that allow authorized external systems to retrieve cost data for recipes managed in BarBrain:
+The Recipe COGS API provides four endpoints that allow authorized external systems to retrieve cost data for recipes managed in BarBrain:
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /fetchRecipeCogs` | Get the total calculated COGS for a single recipe |
 | `GET /fetchRecipeIngredientCogs` | Get COGS broken down per ingredient for a single recipe, scaled by quantity sold |
 | `POST /fetchBatchRecipeIngredientCogs` | Get COGS broken down per ingredient for multiple recipes in a single request |
+| `GET /external/v1/recipes` | List **every** recipe of the company with its COGS breakdown, page by page |
 
-All endpoints identify recipes using the `companyInternalId` — a user-defined identifier that companies assign to recipes in BarBrain (e.g., a POS item code or menu item number). This makes it easy to correlate BarBrain recipe data with external systems.
+The first three endpoints identify recipes using the `companyInternalId` — a user-defined identifier that companies assign to recipes in BarBrain (e.g., a POS item code or menu item number). This makes it easy to correlate BarBrain recipe data with external systems. The list endpoint needs no identifier: it returns every recipe, including those without a `companyInternalId`, so a recipe whose ID was never set (or set wrong) is not silently missed.
 
 **Use cases:**
 
@@ -563,7 +564,161 @@ Each item in `results` has the same structure as the single `fetchRecipeIngredie
 
 ---
 
+## Listing All Recipes with COGS
+
+Returns every recipe of the company the API token belongs to, each with its full COGS breakdown, page by page. Use it to sync your whole recipe catalog without relying on every recipe having a correct `companyInternalId`.
+
+The company is always the token's own: there is no location parameter. A company with several locations (back offices) needs one token per location; every response says which company it came from.
+
+### Endpoint
+
+```bash
+GET https://api.barbrain.com/v2-live/external/v1/recipes
+```
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer | No | Recipes per page, `1` to `200`. Default `200`. Any other value is refused with `400` (error code `150`) |
+| `cursor` | string | No | The `nextCursor` of the previous page. Omit it for the first page |
+
+### Example Request
+
+```bash
+curl -X GET "https://api.barbrain.com/v2-live/external/v1/recipes" \
+  -H "Authorization: Bearer a1b2c3d4e5f6..."
+```
+
+### Success Response (200 OK)
+
+```json
+{
+  "requestDate": "2026-10-21T09:00:00Z",
+  "companyId": "abc-123-def",
+  "companyName": "Napoli Mitte",
+  "currency": "EUR",
+  "items": [
+    {
+      "recipeId": "rec-5678",
+      "recipeName": "Margherita",
+      "companyInternalId": "PIZZA-001",
+      "category": "Food",
+      "isArchived": false,
+      "isPublished": true,
+      "updatedAt": "2026-10-20T14:12:03Z",
+      "totalCogs": 2.42,
+      "costPerYieldUnit": 2.42,
+      "cogsUnavailableReason": null,
+      "yield": { "type": "PORTION", "amount": 1.0, "unit": null },
+      "ingredients": [
+        { "productId": "prod-001", "productName": "Fior di Latte", "quantity": 120.0, "unit": "Gram", "ingredientCogs": 1.32 },
+        { "productId": null, "productName": "Pizza Dough", "quantity": 1.0, "unit": "Piece", "ingredientCogs": 0.47 }
+      ],
+      "uncostedIngredients": []
+    },
+    {
+      "recipeId": "rec-9012",
+      "recipeName": "Marinara",
+      "companyInternalId": null,
+      "category": "Food",
+      "isArchived": false,
+      "isPublished": false,
+      "updatedAt": "2026-10-18T08:40:51Z",
+      "totalCogs": null,
+      "costPerYieldUnit": null,
+      "cogsUnavailableReason": "MISSING_PRICES",
+      "yield": { "type": "PORTION", "amount": 1.0, "unit": null },
+      "ingredients": [
+        { "productId": "prod-014", "productName": "San Marzano Tomatoes", "quantity": 80.0, "unit": "Gram", "ingredientCogs": null }
+      ],
+      "uncostedIngredients": ["San Marzano Tomatoes"]
+    }
+  ],
+  "nextCursor": "djE6dHM6MTc2MDk2MjQ1MTAwMDpyZWMtOTAxMg"
+}
+```
+
+To fetch everything, repeat the request with `cursor` set to the last `nextCursor` until `nextCursor` is `null`.
+
+Recipes are listed in the order they were **created in BarBrain** (oldest first), not by name, so a sync that spans edits in BarBrain neither skips nor repeats a recipe: renaming a recipe does not move it, a recipe created while you page is never skipped (it appears later in this sync or in your next one), and a deleted one simply drops out. Sort by name on your side if you need to.
+
+**Start every sync without a cursor**, and don't store a `nextCursor` to resume a later sync: a cursor is only meant for the pages of one sync. A recipe appears in this listing about **one minute after it is created**, so a recipe saved while you page is never skipped. It shows up in your next sync.
+
+### Response Fields
+
+#### Root Level
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `requestDate` | string | ISO 8601 timestamp of when the request was made |
+| `companyId` | string | The company (location) the API token belongs to |
+| `companyName` | string | Human-readable company name |
+| `currency` | string | ISO 4217 currency code of every amount in the response |
+| `items` | array | The recipes of this page |
+| `nextCursor` | string? | Pass as `cursor` to get the next page. `null` on the last page |
+
+#### Recipe Item
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `recipeId` | string | Unique identifier for this recipe in BarBrain |
+| `recipeName` | string | Human-readable recipe name |
+| `companyInternalId` | string? | The company-defined internal identifier, **or `null` when none is set** |
+| `category` | string | Recipe category: `"Food"`, `"Drink"`, or `"Bundle"` |
+| `isArchived` | boolean | The recipe is archived in BarBrain. Archived recipes are listed too; filter them out if you only want active ones |
+| `isPublished` | boolean | The recipe is published in BarBrain |
+| `updatedAt` | string | ISO 8601 timestamp of the recipe's last change. **Not** of its cost: COGS follows purchase prices, which change without the recipe changing |
+| `totalCogs` | number? | Total COGS for one recipe yield, **including 3% breakage margin**, as in `fetchRecipeCogs`. **`null` when any ingredient has no cost** — see `uncostedIngredients` |
+| `costPerYieldUnit` | number? | `totalCogs` divided by the yield amount (e.g. per ml or per gram), to four decimals. `null` without a cost or a yield |
+| `cogsUnavailableReason` | string? | Why `totalCogs` is `null`: `"NO_INGREDIENTS"` (the recipe has no ingredients yet) or `"MISSING_PRICES"` (see `uncostedIngredients`). `null` when `totalCogs` is set |
+| `yield` | object? | Recipe yield configuration, as in `fetchRecipeCogs` |
+| `ingredients` | array | Every ingredient line with its cost |
+| `uncostedIngredients` | array | Names of the ingredients without a purchase price, which is why `totalCogs` is `null`. Empty when the recipe is fully costed |
+
+#### Ingredient Object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `productId` | string? | Product identifier in BarBrain. **Null for pre-products** (recipes used as ingredients) |
+| `productName` | string | Product name, or source recipe name for pre-products |
+| `quantity` | number | Amount of this ingredient used per recipe yield |
+| `unit` | string | Unit of measurement |
+| `ingredientCogs` | number? | Calculated COGS for this ingredient (before breakage margin). **`null` when the ingredient has no purchase price** |
+
+### Notes
+
+- Unlike the single-recipe endpoints, a recipe without a cost is **not** an error here: it is listed with `totalCogs: null`, so your sync sees it and can show what is missing.
+- Requests count against the same rate limit as the other endpoints (per request, not per recipe): at the default 200 per page, 1,000 recipes take five requests. Keep the default unless you need smaller responses.
+- The `cursor` is opaque. An invalid one is answered with `400` and error code `100`; start again without it.
+
+### Errors
+
+| Status | `errorCode` | When | What to do |
+| --- | --- | --- | --- |
+| 401 | — | Missing, invalid, expired or revoked token | Fix the token; see [401 Unauthorized](#401-unauthorized) |
+| 400 | `100` | The `cursor` is not one this endpoint issued | Restart the sync without `cursor` |
+| 400 | `150` | `limit` is not a whole number from 1 to 200 | Fix the parameter |
+| 400 | `15` | The token's company no longer exists in BarBrain | Do not retry; contact BarBrain support |
+
+---
+
 ## Error Responses
+
+Errors come as a JSON object with the HTTP status: `errorCode` is BarBrain's own code (not the HTTP status, except for `401`), `message` a human-readable text, and `content` extra detail or `null`. Branch on the HTTP status and `errorCode`, never on `message`.
+
+| HTTP | `errorCode` | Meaning |
+| --- | --- | --- |
+| 401 | `401` | Missing, invalid, expired or revoked token |
+| 400 | `8` | A required query parameter is missing |
+| 400 | `15` | The token's company no longer exists |
+| 400 | `89` | `quantitySold` is not a positive integer |
+| 400 | `91` | The batch `items` array is missing, empty or too long |
+| 400 | `100` | Invalid `cursor` (list endpoint) |
+| 400 | `150` | Invalid `limit` (list endpoint) |
+| 404 | `92` | No recipe with that `companyInternalId` |
+| 422 | `93` | The recipe exists but its COGS cannot be calculated |
+| 429 | `429` | Rate limit exceeded for this API client; see `Retry-After` |
 
 ### 401 Unauthorized
 
@@ -571,10 +726,9 @@ Returned when the API token is invalid, expired, or revoked.
 
 ```json
 {
-  "error": {
-    "errorCode": 401,
-    "message": "Invalid or expired API token"
-  }
+  "errorCode": 401,
+  "message": "Access token has expired",
+  "content": null
 }
 ```
 
@@ -591,19 +745,17 @@ Returned when required parameters are missing or invalid.
 
 ```json
 {
-  "error": {
-    "errorCode": 400,
-    "message": "Missing required parameter: companyInternalId"
-  }
+  "errorCode": 8,
+  "message": "Missing Query-Parameter with the key: companyInternalId",
+  "content": null
 }
 ```
 
 ```json
 {
-  "error": {
-    "errorCode": 400,
-    "message": "quantitySold must be a positive integer"
-  }
+  "errorCode": 89,
+  "message": "quantitySold must be a positive integer",
+  "content": null
 }
 ```
 
@@ -611,10 +763,9 @@ Returned when required parameters are missing or invalid.
 
 ```json
 {
-  "error": {
-    "errorCode": 400,
-    "message": "Request body must contain an 'items' array with 1-100 entries"
-  }
+  "errorCode": 91,
+  "message": "Request body must contain an 'items' array with 1-100 entries",
+  "content": null
 }
 ```
 
@@ -624,10 +775,9 @@ Returned when no recipe matches the provided `companyInternalId` for the company
 
 ```json
 {
-  "error": {
-    "errorCode": 404,
-    "message": "Recipe not found for companyInternalId: MOJITO-999"
-  }
+  "errorCode": 92,
+  "message": "Recipe not found for companyInternalId: MOJITO-999",
+  "content": null
 }
 ```
 
@@ -643,10 +793,9 @@ Returned when a recipe is found but COGS cannot be calculated because one or mor
 
 ```json
 {
-  "error": {
-    "errorCode": 422,
-    "message": "Cannot calculate COGS for recipe: MOJITO-001. Some ingredients are missing pricing data."
-  }
+  "errorCode": 93,
+  "message": "Cannot calculate COGS for recipe: MOJITO-001. Some ingredients are missing pricing data.",
+  "content": null
 }
 ```
 
@@ -851,6 +1000,7 @@ curl -s -X POST \
 | Display COGS on a menu dashboard | `GET /fetchRecipeCogs` |
 | Cost analysis for a single item's sales | `GET /fetchRecipeIngredientCogs` |
 | End-of-day/shift cost report for all items sold | `POST /fetchBatchRecipeIngredientCogs` |
+| Sync every recipe and its COGS (e.g. nightly), whether or not it has a `companyInternalId` | `GET /external/v1/recipes` |
 
 ### Batch Endpoint Tips
 
